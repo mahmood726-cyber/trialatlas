@@ -22,6 +22,11 @@ from stats_engine import (
     attribute_assortativity,
     lorenz_curve,
     atkinson_index,
+    spectral_gap,
+    motif_census,
+    link_prediction,
+    core_periphery,
+    network_robustness,
 )
 
 
@@ -282,3 +287,137 @@ def test_full_stats_pipeline(sample_network):
     assert len(bc) > 0 and len(ec) > 0
     assert "power_law_alpha" in dd
     assert len(lc["percentiles"]) > 0
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Spectral Gap (2 tests)
+# ──────────────────────────────────────────────────────────────────────
+
+def test_spectral_gap_simple():
+    """Two-clique graph should have gap at k=2."""
+    graph = {"nodes": {f"a{i}": {} for i in range(4)} | {f"b{i}": {} for i in range(4)},
+             "edges": []}
+    for i in range(4):
+        for j in range(i + 1, 4):
+            graph["edges"].append({"source": f"a{i}", "target": f"a{j}", "weight": 1})
+            graph["edges"].append({"source": f"b{i}", "target": f"b{j}", "weight": 1})
+    # One bridge edge
+    graph["edges"].append({"source": "a0", "target": "b0", "weight": 1})
+    result = spectral_gap(graph)
+    assert result["suggested_k"] == 2
+    assert result["fiedler_value"] > 0  # connected
+
+
+def test_spectral_eigenvalues():
+    """Cycle graph eigenvalues: first eigenvalue is 0."""
+    graph = {"nodes": {f"n{i}": {} for i in range(5)},
+             "edges": [{"source": f"n{i}", "target": f"n{(i+1)%5}", "weight": 1} for i in range(5)]}
+    result = spectral_gap(graph)
+    assert abs(result["eigenvalues"][0]) < 0.01  # first eigenvalue is 0
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Motif Census (2 tests)
+# ──────────────────────────────────────────────────────────────────────
+
+def test_motif_census_bipartite(sample_network):
+    """Motif census runs on real bipartite network."""
+    from src.network_builder import build_sponsor_site_network
+    graph = build_sponsor_site_network(sample_network)
+    result = motif_census(graph)
+    assert "triads" in result
+    assert result["total_triads"] >= 0
+
+
+def test_motif_significance():
+    """Motif census computes significance for small graph."""
+    graph = {"nodes": {f"n{i}": {} for i in range(6)},
+             "edges": [{"source": "n0", "target": "n1", "weight": 1},
+                       {"source": "n0", "target": "n2", "weight": 1},
+                       {"source": "n1", "target": "n2", "weight": 1},
+                       {"source": "n3", "target": "n4", "weight": 1},
+                       {"source": "n4", "target": "n5", "weight": 1}]}
+    result = motif_census(graph)
+    assert "triad_significance" in result
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Link Prediction (2 tests)
+# ──────────────────────────────────────────────────────────────────────
+
+def test_link_prediction_auc():
+    """Link prediction AUC in valid range for ring+skip graph."""
+    graph = {"nodes": {f"n{i}": {} for i in range(10)},
+             "edges": [{"source": f"n{i}", "target": f"n{(i+1)%10}", "weight": 1} for i in range(10)] +
+                      [{"source": f"n{i}", "target": f"n{(i+2)%10}", "weight": 1} for i in range(10)]}
+    result = link_prediction(graph, test_fraction=0.2, seed=42)
+    assert 0 <= result["auc_common_neighbors"] <= 1
+    assert len(result["top_predicted"]) > 0
+
+
+def test_link_prediction_scores():
+    """Link prediction generates predictions for small graph."""
+    graph = {"nodes": {"a": {}, "b": {}, "c": {}, "d": {}, "e": {}},
+             "edges": [{"source": "a", "target": "b", "weight": 1},
+                       {"source": "b", "target": "c", "weight": 1},
+                       {"source": "a", "target": "c", "weight": 1},
+                       {"source": "c", "target": "d", "weight": 1},
+                       {"source": "d", "target": "e", "weight": 1}]}
+    result = link_prediction(graph, test_fraction=0.0, seed=42)
+    # Non-edges between distance-2 nodes should be predicted
+    assert len(result["predictions"]) > 0
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Core-Periphery (2 tests)
+# ──────────────────────────────────────────────────────────────────────
+
+def test_core_periphery_detection():
+    """Dense core + sparse periphery correctly identified."""
+    graph = {"nodes": {f"c{i}": {} for i in range(4)} | {f"p{i}": {} for i in range(4)},
+             "edges": []}
+    # Core is fully connected
+    for i in range(4):
+        for j in range(i + 1, 4):
+            graph["edges"].append({"source": f"c{i}", "target": f"c{j}", "weight": 1})
+    # Periphery connects to one core node each
+    for i in range(4):
+        graph["edges"].append({"source": f"p{i}", "target": f"c{i}", "weight": 1})
+    result = core_periphery(graph, seed=42)
+    assert len(result["core_nodes"]) > 0
+    assert len(result["periphery_nodes"]) > 0
+    assert result["correlation"] > 0
+
+
+def test_core_periphery_quality():
+    """Core-periphery correlation in valid range for small graph."""
+    graph = {"nodes": {f"n{i}": {} for i in range(6)},
+             "edges": [{"source": "n0", "target": "n1", "weight": 1},
+                       {"source": "n0", "target": "n2", "weight": 1},
+                       {"source": "n1", "target": "n2", "weight": 1}]}
+    result = core_periphery(graph, seed=42)
+    assert -1 <= result["correlation"] <= 1
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Network Robustness (2 tests)
+# ──────────────────────────────────────────────────────────────────────
+
+def test_robustness_targeted():
+    """Complete graph should be robust under targeted attack."""
+    graph = {"nodes": {f"n{i}": {} for i in range(8)},
+             "edges": []}
+    for i in range(8):
+        for j in range(i + 1, 8):
+            graph["edges"].append({"source": f"n{i}", "target": f"n{j}", "weight": 1})
+    result = network_robustness(graph, strategy='targeted')
+    assert result["robustness_index"] > 0.3  # robust graph
+    assert len(result["removal_fractions"]) == len(result["giant_component_sizes"])
+
+
+def test_robustness_fragile():
+    """Star graph is fragile — center removal kills connectivity."""
+    graph = {"nodes": {f"n{i}": {} for i in range(6)},
+             "edges": [{"source": "n0", "target": f"n{i}", "weight": 1} for i in range(1, 6)]}
+    result = network_robustness(graph, strategy='targeted')
+    assert result["critical_threshold"] <= 0.3  # fragile — center removal kills it

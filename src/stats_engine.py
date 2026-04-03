@@ -1204,3 +1204,563 @@ def atkinson_index(values, epsilon=0.5):
             A = 1.0
 
     return float(np.clip(A, 0.0, 1.0))
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 12. Spectral Gap Analysis
+# ──────────────────────────────────────────────────────────────────────
+
+def spectral_gap(graph, max_k=10):
+    """Compute spectral gap analysis of the graph Laplacian.
+
+    Eigenvalues of L = D - A reveal cluster structure:
+    - Number of zero eigenvalues = number of connected components
+    - Largest gap in the first max_k eigenvalues suggests optimal k for clustering
+    - Fiedler value (second eigenvalue) measures algebraic connectivity
+
+    Args:
+        graph: dict with 'nodes' and 'edges'
+        max_k: maximum k to consider for gap analysis
+
+    Returns:
+        dict with eigenvalues, gaps, suggested_k, fiedler_value
+    """
+    node_list, name_to_idx, adj, degrees, total_weight = _build_adj(graph)
+    n = len(node_list)
+
+    if n == 0:
+        return {"eigenvalues": [], "gaps": [], "suggested_k": 1, "fiedler_value": 0.0}
+
+    # Build adjacency matrix A and degree matrix D
+    A = np.zeros((n, n), dtype=float)
+    for i in adj:
+        for j, w in adj[i].items():
+            A[i, j] = w
+
+    D = np.diag(A.sum(axis=1))
+    L = D - A
+
+    # Compute eigenvalues (symmetric → eigvalsh is stable)
+    eigenvalues = sorted(np.linalg.eigvalsh(L).tolist())
+
+    # Compute gaps
+    gaps = [eigenvalues[i + 1] - eigenvalues[i] for i in range(len(eigenvalues) - 1)]
+
+    # Suggested k: argmax of gaps in first max_k gaps
+    search_range = min(max_k, len(gaps))
+    if search_range > 0:
+        suggested_k = int(np.argmax(gaps[:search_range])) + 1
+    else:
+        suggested_k = 1
+
+    # Fiedler value: second smallest eigenvalue (index 1 if n >= 2)
+    fiedler_value = eigenvalues[1] if n >= 2 else 0.0
+
+    return {
+        "eigenvalues": eigenvalues,
+        "gaps": gaps,
+        "suggested_k": suggested_k,
+        "fiedler_value": float(fiedler_value),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 13. Network Motif Census
+# ──────────────────────────────────────────────────────────────────────
+
+def motif_census(graph, n_random=100, seed=42):
+    """Count 3-node subgraph motifs (triads) and compute significance.
+
+    Triad types for undirected graphs:
+    - "empty": no edges among the 3 nodes
+    - "edge": exactly 1 edge (open pair)
+    - "wedge": exactly 2 edges (V-shape / path)
+    - "triangle": all 3 edges present
+
+    Significance is computed as z-score against configuration-model
+    random graphs.
+
+    Args:
+        graph: dict with 'nodes' and 'edges'
+        n_random: number of random graphs for significance testing
+        seed: RNG seed for reproducibility
+
+    Returns:
+        dict with triads, triad_significance, total_triads
+    """
+    rng = random.Random(seed)
+    node_list, name_to_idx, adj, degrees, total_weight = _build_adj(graph)
+    n = len(node_list)
+
+    # Build adjacency set for fast lookup
+    edge_set = set()
+    for i in adj:
+        for j in adj[i]:
+            if i < j:
+                edge_set.add((i, j))
+
+    def _count_triads(es, n_nodes):
+        """Count triad types for a given edge set."""
+        # Build adjacency list from edge set
+        nbrs = defaultdict(set)
+        for i, j in es:
+            nbrs[i].add(j)
+            nbrs[j].add(i)
+
+        # Count wedges (pairs of neighbors) and triangles
+        total_triangles = 0
+        total_wedges = 0
+        for u in range(n_nodes):
+            nbrs_u = sorted(nbrs[u])
+            k = len(nbrs_u)
+            # Number of wedges centered at u
+            total_wedges += k * (k - 1) // 2
+            # Count triangles involving u
+            for idx_a in range(k):
+                for idx_b in range(idx_a + 1, k):
+                    a, b = nbrs_u[idx_a], nbrs_u[idx_b]
+                    if b in nbrs[a]:
+                        total_triangles += 1
+
+        # Each triangle counted 3 times (once per vertex)
+        total_triangles //= 3
+        # Each triangle contributes 3 wedges
+        total_wedges -= total_triangles * 3  # open wedges only
+        # total_wedges now = open wedges (V-shapes without closing edge)
+
+        return {"triangle": total_triangles, "wedge": total_wedges}
+
+    # Count in observed graph
+    observed = _count_triads(edge_set, n)
+    total_triads = observed["triangle"] + observed["wedge"]
+
+    # Configuration model random graphs for significance
+    edge_list = list(edge_set)
+    m = len(edge_list)
+    degree_seq = defaultdict(int)
+    for i, j in edge_list:
+        degree_seq[i] += 1
+        degree_seq[j] += 1
+
+    random_counts = {"triangle": [], "wedge": []}
+
+    for _ in range(n_random):
+        # Configuration model: create random graph preserving degree sequence
+        stubs = []
+        for node, deg in degree_seq.items():
+            stubs.extend([node] * deg)
+        rng.shuffle(stubs)
+
+        rand_edges = set()
+        for k in range(0, len(stubs) - 1, 2):
+            u, v = stubs[k], stubs[k + 1]
+            if u != v:  # no self-loops
+                rand_edges.add((min(u, v), max(u, v)))
+
+        rc = _count_triads(rand_edges, n)
+        random_counts["triangle"].append(rc["triangle"])
+        random_counts["wedge"].append(rc["wedge"])
+
+    # Compute z-scores
+    triad_significance = {}
+    for motif_type in ["triangle", "wedge"]:
+        rand_vals = random_counts[motif_type]
+        mean_r = np.mean(rand_vals)
+        std_r = np.std(rand_vals, ddof=0)
+        if std_r > 0:
+            z = (observed[motif_type] - mean_r) / std_r
+        else:
+            z = 0.0
+        triad_significance[motif_type] = float(z)
+
+    return {
+        "triads": {k: v for k, v in observed.items()},
+        "triad_significance": triad_significance,
+        "total_triads": total_triads,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 14. Link Prediction
+# ──────────────────────────────────────────────────────────────────────
+
+def link_prediction(graph, test_fraction=0.2, seed=42):
+    """Predict missing/future edges using neighborhood-based scores.
+
+    Methods:
+    - Common Neighbors: |N(u) ∩ N(v)|
+    - Jaccard coefficient: |N(u) ∩ N(v)| / |N(u) ∪ N(v)|
+    - Adamic-Adar: sum(1/log(|N(w)|)) for w in N(u) ∩ N(v)
+
+    Evaluation: hold out test_fraction of edges, predict, compute AUC.
+
+    Args:
+        graph: dict with 'nodes' and 'edges'
+        test_fraction: fraction of edges to hold out for evaluation
+        seed: RNG seed for reproducibility
+
+    Returns:
+        dict with predictions, AUC per method, top_predicted
+    """
+    rng = random.Random(seed)
+    node_list, name_to_idx, adj, degrees, total_weight = _build_adj(graph)
+    n = len(node_list)
+
+    # Build edge set
+    all_edges = set()
+    for i in adj:
+        for j in adj[i]:
+            if i < j:
+                all_edges.add((i, j))
+
+    edge_list = sorted(all_edges)
+
+    # Split into train and test
+    n_test = max(1, int(len(edge_list) * test_fraction))
+    if test_fraction <= 0 or len(edge_list) < 3:
+        n_test = 0
+
+    shuffled = list(edge_list)
+    rng.shuffle(shuffled)
+    test_edges = set(shuffled[:n_test])
+    train_edges = all_edges - test_edges
+
+    # Build training adjacency
+    train_nbrs = defaultdict(set)
+    for i, j in train_edges:
+        train_nbrs[i].add(j)
+        train_nbrs[j].add(i)
+
+    def _common_neighbors(u, v):
+        return len(train_nbrs[u] & train_nbrs[v])
+
+    def _jaccard(u, v):
+        inter = len(train_nbrs[u] & train_nbrs[v])
+        union = len(train_nbrs[u] | train_nbrs[v])
+        return inter / union if union > 0 else 0.0
+
+    def _adamic_adar(u, v):
+        score = 0.0
+        for w in train_nbrs[u] & train_nbrs[v]:
+            deg_w = len(train_nbrs[w])
+            if deg_w > 1:
+                score += 1.0 / math.log(deg_w)
+        return score
+
+    # Score all non-edges (in training graph)
+    non_edges = []
+    # For efficiency, limit to node pairs within distance 2
+    candidates = set()
+    for u in range(n):
+        for v in train_nbrs[u]:
+            for w in train_nbrs[v]:
+                if w > u and (min(u, w), max(u, w)) not in train_edges:
+                    candidates.add((u, w))
+
+    predictions = []
+    for u, v in candidates:
+        cn = _common_neighbors(u, v)
+        jc = _jaccard(u, v)
+        aa = _adamic_adar(u, v)
+        predictions.append({
+            "source": node_list[u],
+            "target": node_list[v],
+            "common_neighbors": cn,
+            "jaccard": jc,
+            "adamic_adar": aa,
+        })
+
+    # Compute AUC for each method if we have test edges
+    auc_cn = 0.5
+    auc_jc = 0.5
+    auc_aa = 0.5
+
+    if n_test > 0 and len(candidates) > 0:
+        # Build score dicts
+        score_map_cn = {}
+        score_map_jc = {}
+        score_map_aa = {}
+        for p in predictions:
+            key = (name_to_idx[p["source"]], name_to_idx[p["target"]])
+            score_map_cn[key] = p["common_neighbors"]
+            score_map_jc[key] = p["jaccard"]
+            score_map_aa[key] = p["adamic_adar"]
+
+        # For AUC: compare test edges vs random non-edges
+        test_edge_list = list(test_edges)
+        non_test_non_edges = [e for e in candidates if e not in test_edges]
+
+        if len(non_test_non_edges) > 0 and len(test_edge_list) > 0:
+            n_comparisons = min(1000, len(test_edge_list) * len(non_test_non_edges))
+            wins_cn, wins_jc, wins_aa = 0, 0, 0
+            total_comp = 0
+
+            for _ in range(n_comparisons):
+                pos = test_edge_list[rng.randint(0, len(test_edge_list) - 1)]
+                neg = non_test_non_edges[rng.randint(0, len(non_test_non_edges) - 1)]
+
+                pos_key = (min(pos[0], pos[1]), max(pos[0], pos[1]))
+                neg_key = (min(neg[0], neg[1]), max(neg[0], neg[1]))
+
+                s_pos_cn = score_map_cn.get(pos_key, 0)
+                s_neg_cn = score_map_cn.get(neg_key, 0)
+                s_pos_jc = score_map_jc.get(pos_key, 0)
+                s_neg_jc = score_map_jc.get(neg_key, 0)
+                s_pos_aa = score_map_aa.get(pos_key, 0)
+                s_neg_aa = score_map_aa.get(neg_key, 0)
+
+                if s_pos_cn > s_neg_cn:
+                    wins_cn += 1
+                elif s_pos_cn == s_neg_cn:
+                    wins_cn += 0.5
+                if s_pos_jc > s_neg_jc:
+                    wins_jc += 1
+                elif s_pos_jc == s_neg_jc:
+                    wins_jc += 0.5
+                if s_pos_aa > s_neg_aa:
+                    wins_aa += 1
+                elif s_pos_aa == s_neg_aa:
+                    wins_aa += 0.5
+
+                total_comp += 1
+
+            if total_comp > 0:
+                auc_cn = wins_cn / total_comp
+                auc_jc = wins_jc / total_comp
+                auc_aa = wins_aa / total_comp
+
+    # Sort predictions by Adamic-Adar score
+    predictions.sort(key=lambda p: p["adamic_adar"], reverse=True)
+    top_predicted = [
+        {"source": p["source"], "target": p["target"], "score": p["adamic_adar"]}
+        for p in predictions[:10]
+    ]
+
+    return {
+        "predictions": predictions,
+        "auc_common_neighbors": float(auc_cn),
+        "auc_jaccard": float(auc_jc),
+        "auc_adamic_adar": float(auc_aa),
+        "top_predicted": top_predicted,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 15. Core-Periphery Detection (Borgatti-Everett)
+# ──────────────────────────────────────────────────────────────────────
+
+def core_periphery(graph, seed=42):
+    """Detect core-periphery structure using Borgatti-Everett model.
+
+    The ideal core-periphery pattern:
+    - Core-core: all edges present
+    - Core-periphery: all edges present
+    - Periphery-periphery: no edges
+
+    Uses greedy hill-climbing with random restarts to maximize
+    Pearson correlation between adjacency matrix and ideal pattern.
+
+    Args:
+        graph: dict with 'nodes' and 'edges'
+        seed: RNG seed for reproducibility
+
+    Returns:
+        dict with core_nodes, periphery_nodes, core_quality, correlation
+    """
+    rng = random.Random(seed)
+    node_list, name_to_idx, adj, degrees, total_weight = _build_adj(graph)
+    n = len(node_list)
+
+    if n == 0:
+        return {
+            "core_nodes": [],
+            "periphery_nodes": [],
+            "core_quality": 0.0,
+            "correlation": 0.0,
+        }
+
+    # Build adjacency matrix (binary for correlation)
+    A = np.zeros((n, n), dtype=float)
+    for i in adj:
+        for j, w in adj[i].items():
+            A[i, j] = 1.0  # binary
+
+    def _compute_correlation(assignment):
+        """Compute Pearson correlation between A and ideal pattern."""
+        ideal = np.zeros((n, n), dtype=float)
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    ideal[i, j] = max(assignment[i], assignment[j])
+
+        # Flatten upper triangle only
+        idx = np.triu_indices(n, k=1)
+        a_flat = A[idx]
+        i_flat = ideal[idx]
+
+        if np.std(a_flat) < 1e-12 or np.std(i_flat) < 1e-12:
+            return 0.0
+
+        return float(np.corrcoef(a_flat, i_flat)[0, 1])
+
+    best_assignment = None
+    best_corr = -2.0
+
+    # Multiple random restarts
+    n_restarts = 10
+    for _ in range(n_restarts):
+        # Initialize: assign top-degree nodes to core
+        assignment = [0] * n
+        n_core = max(1, n // 3)
+
+        # Random initialization
+        core_indices = rng.sample(range(n), min(n_core, n))
+        for idx in core_indices:
+            assignment[idx] = 1
+
+        # Greedy hill-climbing
+        improved = True
+        current_corr = _compute_correlation(assignment)
+        while improved:
+            improved = False
+            for i in range(n):
+                # Try flipping node i
+                assignment[i] = 1 - assignment[i]
+                new_corr = _compute_correlation(assignment)
+
+                if new_corr > current_corr:
+                    current_corr = new_corr
+                    improved = True
+                else:
+                    assignment[i] = 1 - assignment[i]  # flip back
+
+        corr = _compute_correlation(assignment)
+        if corr > best_corr:
+            best_corr = corr
+            best_assignment = list(assignment)
+
+    # Extract results
+    core_nodes = [node_list[i] for i in range(n) if best_assignment[i] == 1]
+    periphery_nodes = [node_list[i] for i in range(n) if best_assignment[i] == 0]
+
+    # Core quality: density of core subgraph
+    n_core = len(core_nodes)
+    if n_core >= 2:
+        core_idx = [i for i in range(n) if best_assignment[i] == 1]
+        core_edges = sum(1 for i in core_idx for j in core_idx if i < j and A[i, j] > 0)
+        max_core_edges = n_core * (n_core - 1) // 2
+        core_quality = core_edges / max_core_edges if max_core_edges > 0 else 0.0
+    else:
+        core_quality = 0.0
+
+    return {
+        "core_nodes": core_nodes,
+        "periphery_nodes": periphery_nodes,
+        "core_quality": float(core_quality),
+        "correlation": float(best_corr),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 16. Network Robustness (Percolation Analysis)
+# ──────────────────────────────────────────────────────────────────────
+
+def network_robustness(graph, strategy='targeted', seed=42):
+    """Analyze network robustness via node removal percolation.
+
+    Remove nodes progressively and track the size of the largest
+    connected component (giant component).
+
+    Strategies:
+    - 'targeted': remove highest-degree nodes first (worst-case attack)
+    - 'random': remove nodes in random order (random failure)
+
+    Args:
+        graph: dict with 'nodes' and 'edges'
+        strategy: 'targeted' or 'random'
+        seed: RNG seed for reproducibility (used for 'random' strategy)
+
+    Returns:
+        dict with removal_fractions, giant_component_sizes,
+        critical_threshold, robustness_index
+    """
+    rng = random.Random(seed)
+    node_list, name_to_idx, adj, degrees, total_weight = _build_adj(graph)
+    n = len(node_list)
+
+    if n == 0:
+        return {
+            "removal_fractions": [0.0],
+            "giant_component_sizes": [0],
+            "critical_threshold": 0.0,
+            "robustness_index": 0.0,
+        }
+
+    # Determine removal order
+    if strategy == 'targeted':
+        # Sort by degree descending
+        order = sorted(range(n), key=lambda i: degrees.get(i, 0), reverse=True)
+    else:
+        order = list(range(n))
+        rng.shuffle(order)
+
+    # Fractions to evaluate
+    fractions = [round(f * 0.05, 2) for f in range(21)]  # 0.0, 0.05, ..., 1.0
+
+    removal_fractions = []
+    giant_component_sizes = []
+    removed = set()
+
+    def _giant_component_size(removed_set):
+        """BFS to find largest connected component."""
+        visited = set()
+        max_size = 0
+        for start in range(n):
+            if start in removed_set or start in visited:
+                continue
+            # BFS
+            queue = [start]
+            visited.add(start)
+            size = 0
+            while queue:
+                node = queue.pop(0)
+                size += 1
+                for nbr in adj.get(node, {}):
+                    if nbr not in removed_set and nbr not in visited:
+                        visited.add(nbr)
+                        queue.append(nbr)
+            max_size = max(max_size, size)
+        return max_size
+
+    order_idx = 0
+    for frac in fractions:
+        n_remove = int(round(frac * n))
+        # Remove nodes up to n_remove
+        while len(removed) < n_remove and order_idx < n:
+            removed.add(order[order_idx])
+            order_idx += 1
+
+        gc_size = _giant_component_size(removed)
+        removal_fractions.append(frac)
+        giant_component_sizes.append(gc_size)
+
+    # Normalize giant component sizes by original size
+    gc_normalized = [s / n for s in giant_component_sizes]
+
+    # Critical threshold: first fraction where giant component < 50% of original
+    critical_threshold = 1.0
+    for i, (frac, gc_n) in enumerate(zip(removal_fractions, gc_normalized)):
+        if gc_n < 0.5:
+            critical_threshold = frac
+            break
+
+    # Robustness index: area under the curve (trapezoidal integration)
+    _trapz = getattr(np, 'trapezoid', np.trapz)
+    robustness_index = float(_trapz(gc_normalized, removal_fractions))
+
+    return {
+        "removal_fractions": removal_fractions,
+        "giant_component_sizes": giant_component_sizes,
+        "critical_threshold": float(critical_threshold),
+        "robustness_index": float(robustness_index),
+    }
