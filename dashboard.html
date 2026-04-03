@@ -1,0 +1,1446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrialAtlas - Clinical Trial Ecosystem Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin="">
+<style>
+/* ===== CSS Custom Properties ===== */
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f7fa;
+  --bg-panel: #ffffff;
+  --bg-header: #1a1a2e;
+  --text-primary: #1a1a2e;
+  --text-secondary: #4a5568;
+  --text-muted: #718096;
+  --border-color: #e2e8f0;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-light: #dbeafe;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --tab-active-bg: #3b82f6;
+  --tab-active-text: #ffffff;
+  --tab-inactive-bg: transparent;
+  --tab-inactive-text: #4a5568;
+  --node-sponsor: #6366f1;
+  --node-site: #10b981;
+  --shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-lg: 0 4px 14px rgba(0,0,0,0.1);
+}
+
+body.dark-mode {
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-panel: #1e293b;
+  --bg-header: #0f172a;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --border-color: #334155;
+  --accent: #60a5fa;
+  --accent-hover: #93bbfc;
+  --accent-light: #1e3a5f;
+  --tab-active-bg: #60a5fa;
+  --tab-active-text: #0f172a;
+  --tab-inactive-text: #94a3b8;
+  --shadow: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow-lg: 0 4px 14px rgba(0,0,0,0.4);
+}
+
+/* ===== Reset & Base ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  min-height: 100vh;
+  transition: background 0.3s, color 0.3s;
+}
+
+/* ===== Skip Nav (Accessibility) ===== */
+.skip-nav {
+  position: absolute;
+  top: -100%;
+  left: 0;
+  background: var(--accent);
+  color: #fff;
+  padding: 8px 16px;
+  z-index: 10000;
+  font-size: 14px;
+  text-decoration: none;
+  border-radius: 0 0 4px 0;
+}
+.skip-nav:focus {
+  top: 0;
+}
+
+/* ===== Header ===== */
+.header {
+  background: var(--bg-header);
+  color: #e2e8f0;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: var(--shadow-lg);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+.header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.header-meta {
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+/* Dark mode toggle */
+.dark-toggle {
+  background: none;
+  border: 2px solid #475569;
+  color: #e2e8f0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: border-color 0.2s, background 0.2s;
+}
+.dark-toggle:hover, .dark-toggle:focus {
+  border-color: var(--accent);
+  background: rgba(96,165,250,0.1);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ===== Tabs ===== */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 24px;
+}
+.tab-btn {
+  background: var(--tab-inactive-bg);
+  color: var(--tab-inactive-text);
+  border: none;
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+  position: relative;
+}
+.tab-btn:hover {
+  color: var(--accent);
+  background: var(--accent-light);
+}
+.tab-btn:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: var(--bg-primary);
+}
+.tab-btn .tab-badge {
+  font-size: 11px;
+  background: var(--accent);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* ===== Panel Container ===== */
+.panel-container {
+  padding: 24px;
+}
+.panel {
+  display: none;
+  animation: fadeIn 0.3s ease;
+}
+.panel.active { display: block; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Panel Shared ===== */
+.panel-header {
+  margin-bottom: 16px;
+}
+.panel-header h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.panel-header p {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* ===== Cards ===== */
+.card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: var(--shadow);
+}
+
+/* ===== Network View ===== */
+.network-container {
+  display: flex;
+  gap: 16px;
+}
+.network-svg-wrap {
+  flex: 1;
+  min-height: 500px;
+  position: relative;
+}
+.network-svg-wrap svg {
+  width: 100%;
+  height: 500px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+.network-sidebar {
+  width: 300px;
+  flex-shrink: 0;
+}
+.node-detail {
+  padding: 16px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  min-height: 200px;
+}
+.node-detail h3 {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+.node-detail .detail-row {
+  font-size: 13px;
+  padding: 4px 0;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-color);
+}
+.node-detail .detail-row:last-child { border-bottom: none; }
+.node-detail .detail-label { color: var(--text-muted); }
+.node-detail .detail-value { font-weight: 600; color: var(--text-primary); }
+.legend-wrap {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+.legend-wrap h4 { font-size: 13px; margin-bottom: 8px; color: var(--text-muted); }
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 4px 0;
+}
+.legend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* ===== Geographic View ===== */
+.geo-layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 16px;
+}
+#leaflet-map {
+  height: 500px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  z-index: 1;
+}
+.geo-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.stat-card {
+  padding: 16px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  text-align: center;
+}
+.stat-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--accent);
+}
+.stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+}
+.country-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+.country-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.country-row:last-child { border-bottom: none; }
+.country-name { color: var(--text-primary); }
+.country-count {
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 30px;
+  text-align: right;
+}
+
+/* ===== Sponsor Profile ===== */
+.sponsor-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.sponsor-controls label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.sponsor-controls select {
+  flex: 1;
+  max-width: 400px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+.sponsor-controls select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.sponsor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.sponsor-sites-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.sponsor-sites-table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid var(--border-color);
+}
+.sponsor-sites-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+.sponsor-sites-table tbody tr:hover {
+  background: var(--accent-light);
+}
+
+/* ===== Trial Deserts ===== */
+.deserts-info {
+  padding: 12px 16px;
+  background: var(--accent-light);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+.deserts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.deserts-table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid var(--border-color);
+}
+.deserts-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+.deserts-table tbody tr:hover {
+  background: var(--accent-light);
+}
+.pct-bar-wrap {
+  width: 100%;
+  height: 6px;
+  background: var(--border-color);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.pct-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.pct-high { background: var(--danger); }
+.pct-medium { background: var(--warning); }
+
+/* ===== Factory Alerts ===== */
+.factory-card {
+  padding: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.factory-card h4 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.factory-score {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-left: 8px;
+}
+.score-high { background: #fef2f2; color: #991b1b; }
+.score-medium { background: #fffbeb; color: #92400e; }
+body.dark-mode .score-high { background: #450a0a; color: #fca5a5; }
+body.dark-mode .score-medium { background: #451a03; color: #fcd34d; }
+
+/* ===== Loading / Error ===== */
+.loading-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  color: var(--text-muted);
+  font-size: 16px;
+}
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 12px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.error-box {
+  padding: 20px;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  color: #991b1b;
+  text-align: center;
+}
+body.dark-mode .error-box {
+  background: #450a0a;
+  border-color: #7f1d1d;
+  color: #fca5a5;
+}
+
+/* ===== Tooltip ===== */
+.d3-tooltip {
+  position: absolute;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  z-index: 500;
+  max-width: 250px;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 900px) {
+  .network-container { flex-direction: column; }
+  .network-sidebar { width: 100%; }
+  .geo-layout { grid-template-columns: 1fr; }
+}
+
+/* ===== Leaflet dark mode ===== */
+body.dark-mode .leaflet-tile {
+  filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(1.2);
+}
+body.dark-mode .leaflet-control-zoom a {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+</style>
+</head>
+<body>
+
+<!-- Skip Navigation (Accessibility) -->
+<a href="#main-content" class="skip-nav">Skip to main content</a>
+
+<!-- Header -->
+<header class="header" role="banner">
+  <h1>TrialAtlas</h1>
+  <div class="header-right">
+    <span class="header-meta" id="header-meta"></span>
+    <button class="dark-toggle" id="dark-toggle"
+            aria-label="Toggle dark mode"
+            role="switch" aria-checked="false">Light Mode</button>
+  </div>
+</header>
+
+<!-- Tab Bar -->
+<nav class="tab-bar" role="tablist" aria-label="Dashboard panels">
+  <button class="tab-btn active" role="tab" aria-selected="true"
+          aria-controls="panel-network" id="tab-network"
+          data-panel="network">Network View</button>
+  <button class="tab-btn" role="tab" aria-selected="false"
+          aria-controls="panel-geo" id="tab-geo"
+          data-panel="geo">Geographic View</button>
+  <button class="tab-btn" role="tab" aria-selected="false"
+          aria-controls="panel-sponsor" id="tab-sponsor"
+          data-panel="sponsor">Sponsor Profile</button>
+  <button class="tab-btn" role="tab" aria-selected="false"
+          aria-controls="panel-deserts" id="tab-deserts"
+          data-panel="deserts">Trial Deserts</button>
+</nav>
+
+<!-- Main Content -->
+<main id="main-content" class="panel-container">
+
+  <!-- Loading state -->
+  <div id="loading-state" class="loading-overlay">
+    <div class="spinner"></div>
+    <span>Loading dashboard data...</span>
+  </div>
+
+  <!-- Error state -->
+  <div id="error-state" class="error-box" style="display:none;"></div>
+
+  <!-- Panel: Network View -->
+  <div class="panel active" id="panel-network" role="tabpanel" aria-labelledby="tab-network" style="display:none;">
+    <div class="panel-header">
+      <h2>Sponsor-Site Network</h2>
+      <p>Force-directed graph of sponsors (squares) and sites (circles). Nodes colored by community. Click a node for details.</p>
+    </div>
+    <div class="network-container">
+      <div class="network-svg-wrap card">
+        <svg id="network-svg" aria-label="Force-directed network graph of sponsors and sites"></svg>
+      </div>
+      <div class="network-sidebar">
+        <div class="node-detail" id="node-detail">
+          <h3>Click a node to see details</h3>
+          <p style="font-size:13px;color:var(--text-muted);">Hover over nodes for tooltips. Drag to rearrange.</p>
+        </div>
+        <div class="legend-wrap" id="network-legend">
+          <h4>Legend</h4>
+          <div class="legend-item">
+            <span class="legend-dot" style="background:var(--node-sponsor);border-radius:2px;"></span>
+            Sponsor
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background:var(--node-site);"></span>
+            Site
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel: Geographic View -->
+  <div class="panel" id="panel-geo" role="tabpanel" aria-labelledby="tab-geo" style="display:none;">
+    <div class="panel-header">
+      <h2>Geographic Distribution</h2>
+      <p>Trial site locations colored by trial density. Marker size reflects the number of trials.</p>
+    </div>
+    <div class="geo-layout">
+      <div id="leaflet-map" role="application" aria-label="World map showing trial site locations"></div>
+      <div class="geo-stats">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-countries">--</div>
+          <div class="stat-label">Countries</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-gini">--</div>
+          <div class="stat-label">Gini Coefficient</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-trials">--</div>
+          <div class="stat-label">Total Trials</div>
+        </div>
+        <div class="country-list" id="country-list" aria-label="Trial counts by country">
+          <div style="font-size:13px;color:var(--text-muted);">Loading...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel: Sponsor Profile -->
+  <div class="panel" id="panel-sponsor" role="tabpanel" aria-labelledby="tab-sponsor" style="display:none;">
+    <div class="panel-header">
+      <h2>Sponsor Profile</h2>
+      <p>Select a sponsor to view their sites, conditions, and trial count.</p>
+    </div>
+    <div class="sponsor-controls">
+      <label for="sponsor-select">Sponsor:</label>
+      <select id="sponsor-select" aria-label="Select a sponsor"></select>
+    </div>
+    <div class="sponsor-grid" id="sponsor-stats"></div>
+    <div class="card" id="sponsor-detail-wrap">
+      <h3 style="font-size:15px;font-weight:700;margin-bottom:12px;">Sites</h3>
+      <table class="sponsor-sites-table" id="sponsor-sites-table">
+        <thead>
+          <tr>
+            <th>Site</th>
+            <th>Country</th>
+            <th>Shared Trials</th>
+          </tr>
+        </thead>
+        <tbody id="sponsor-sites-body">
+          <tr><td colspan="3" style="text-align:center;color:var(--text-muted);">Select a sponsor above</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Panel: Trial Deserts -->
+  <div class="panel" id="panel-deserts" role="tabpanel" aria-labelledby="tab-deserts" style="display:none;">
+    <div class="panel-header">
+      <h2>Trial Deserts</h2>
+      <p>Conditions where more than 80% of trial activity is concentrated in 3 or fewer countries.</p>
+    </div>
+    <div class="deserts-info" role="note">
+      Trial deserts highlight conditions with extreme geographic concentration, suggesting
+      underrepresentation in global populations.
+    </div>
+    <div class="card">
+      <table class="deserts-table" id="deserts-table">
+        <thead>
+          <tr>
+            <th>Condition</th>
+            <th>Top Countries</th>
+            <th>Concentration</th>
+            <th style="width:120px;">Visual</th>
+          </tr>
+        </thead>
+        <tbody id="deserts-body">
+          <tr><td colspan="4" style="text-align:center;color:var(--text-muted);">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:24px;">
+      <div class="panel-header">
+        <h3 style="font-size:16px;">Factory Alerts</h3>
+        <p>Sites flagged for unusually high trial volume and sponsor diversity.</p>
+      </div>
+      <div id="factory-alerts"></div>
+    </div>
+  </div>
+
+</main>
+
+<!-- D3.js v7 -->
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<!-- Leaflet v1.9 -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+
+<script>
+/* ===================================================================
+   TrialAtlas Dashboard - Main Application
+   =================================================================== */
+(function() {
+  "use strict";
+
+  // --- Constants ---
+  const LS_KEY = "ta_preferences";
+  const DATA_URL = "data/processed/dashboard_data.json";
+
+  // Community colors (10 distinct, WCAG AA safe against both light/dark bg)
+  const COMMUNITY_COLORS = [
+    "#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
+    "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#14b8a6"
+  ];
+
+  // Rough country centroids for Leaflet markers (ISO name -> [lat, lng])
+  const COUNTRY_COORDS = {
+    "United States": [39.8, -98.5],
+    "United Kingdom": [55.4, -3.4],
+    "Germany": [51.2, 10.4],
+    "France": [46.2, 2.2],
+    "Japan": [36.2, 138.3],
+    "China": [35.9, 104.2],
+    "Canada": [56.1, -106.3],
+    "Australia": [-25.3, 133.8],
+    "Italy": [41.9, 12.6],
+    "Spain": [40.5, -3.7],
+    "Netherlands": [52.1, 5.3],
+    "Brazil": [-14.2, -51.9],
+    "India": [20.6, 78.9],
+    "South Korea": [35.9, 127.8],
+    "Switzerland": [46.8, 8.2],
+    "Sweden": [60.1, 18.6],
+    "Belgium": [50.5, 4.5],
+    "Denmark": [56.3, 9.5],
+    "Poland": [51.9, 19.1],
+    "Austria": [47.5, 14.6],
+    "Israel": [31.0, 34.9],
+    "Mexico": [23.6, -102.6],
+    "Argentina": [-38.4, -63.6],
+    "Russia": [61.5, 105.3],
+    "Turkey": [39.0, 35.2],
+    "South Africa": [-30.6, 22.9],
+    "Thailand": [15.9, 100.9],
+    "Taiwan": [23.7, 121.0],
+    "Norway": [60.5, 8.5],
+    "Finland": [61.9, 25.7],
+    "Czech Republic": [49.8, 15.5],
+    "Hungary": [47.2, 19.5],
+    "Romania": [45.9, 25.0],
+    "Greece": [39.1, 21.8],
+    "Portugal": [39.4, -8.2],
+    "Ireland": [53.4, -8.2],
+    "New Zealand": [-40.9, 174.9],
+    "Singapore": [1.4, 103.8],
+    "Malaysia": [4.2, 101.9],
+    "Philippines": [12.9, 121.8],
+    "Colombia": [4.6, -74.3],
+    "Chile": [-35.7, -71.5],
+    "Peru": [-9.2, -75.0],
+    "Egypt": [26.8, 30.8],
+    "Nigeria": [9.1, 8.7],
+    "Kenya": [-0.02, 37.9],
+    "Ukraine": [48.4, 31.2],
+    "Pakistan": [30.4, 69.3],
+    "Bangladesh": [23.7, 90.4],
+    "Indonesia": [-0.8, 113.9],
+    "Vietnam": [14.1, 108.3],
+    "Saudi Arabia": [23.9, 45.1],
+  };
+
+  // --- State ---
+  let dashData = null;
+  let leafletMap = null;
+  let leafletMarkers = [];
+  let simulation = null;
+
+  // --- Preferences ---
+  function loadPrefs() {
+    try {
+      return JSON.parse(localStorage.getItem(LS_KEY)) || {};
+    } catch { return {}; }
+  }
+  function savePrefs(prefs) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(prefs)); } catch {}
+  }
+
+  // --- Dark Mode ---
+  function initDarkMode() {
+    const prefs = loadPrefs();
+    const isDark = prefs.darkMode === true;
+    applyDarkMode(isDark);
+
+    const btn = document.getElementById("dark-toggle");
+    btn.addEventListener("click", function() {
+      const nowDark = document.body.classList.toggle("dark-mode");
+      btn.textContent = nowDark ? "Dark Mode" : "Light Mode";
+      btn.setAttribute("aria-checked", String(nowDark));
+      const p = loadPrefs();
+      p.darkMode = nowDark;
+      savePrefs(p);
+      // Refresh Leaflet tiles if map exists
+      if (leafletMap) {
+        leafletMap.invalidateSize();
+      }
+    });
+    btn.addEventListener("keydown", function(e) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        btn.click();
+      }
+    });
+  }
+
+  function applyDarkMode(isDark) {
+    const btn = document.getElementById("dark-toggle");
+    if (isDark) {
+      document.body.classList.add("dark-mode");
+      btn.textContent = "Dark Mode";
+      btn.setAttribute("aria-checked", "true");
+    } else {
+      document.body.classList.remove("dark-mode");
+      btn.textContent = "Light Mode";
+      btn.setAttribute("aria-checked", "false");
+    }
+  }
+
+  // --- Tabs ---
+  function initTabs() {
+    const prefs = loadPrefs();
+    const activePanel = prefs.activeTab || "network";
+
+    const btns = document.querySelectorAll(".tab-btn");
+    btns.forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        switchTab(btn.getAttribute("data-panel"));
+      });
+      btn.addEventListener("keydown", function(e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          btn.click();
+        }
+      });
+    });
+    switchTab(activePanel);
+  }
+
+  function switchTab(panelId) {
+    // Update buttons
+    document.querySelectorAll(".tab-btn").forEach(function(btn) {
+      const isActive = btn.getAttribute("data-panel") === panelId;
+      btn.classList.toggle("active", isActive);
+      btn.setAttribute("aria-selected", String(isActive));
+    });
+    // Update panels
+    document.querySelectorAll(".panel").forEach(function(p) {
+      const id = p.id.replace("panel-", "");
+      const isActive = id === panelId;
+      p.classList.toggle("active", isActive);
+      p.style.display = isActive ? "block" : "none";
+    });
+    // Save preference
+    const prefs = loadPrefs();
+    prefs.activeTab = panelId;
+    savePrefs(prefs);
+    // Refresh map if geographic tab
+    if (panelId === "geo" && leafletMap) {
+      setTimeout(function() { leafletMap.invalidateSize(); }, 100);
+    }
+  }
+
+  // --- HTML Escaping ---
+  function esc(str) {
+    if (str == null) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  // --- Data Loading ---
+  function loadData() {
+    fetch(DATA_URL)
+      .then(function(resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status + ": " + resp.statusText);
+        return resp.json();
+      })
+      .then(function(data) {
+        dashData = data;
+        document.getElementById("loading-state").style.display = "none";
+        renderAll();
+      })
+      .catch(function(err) {
+        document.getElementById("loading-state").style.display = "none";
+        var errBox = document.getElementById("error-state");
+        errBox.style.display = "block";
+        errBox.textContent = "Failed to load data: " + err.message +
+          ". Run run_analysis.py first to generate dashboard_data.json.";
+      });
+  }
+
+  // --- Render All ---
+  function renderAll() {
+    renderHeader();
+    renderNetwork();
+    renderGeography();
+    renderSponsorProfile();
+    renderDeserts();
+    // Show the panels (hidden during loading)
+    document.querySelectorAll(".panel").forEach(function(p) {
+      if (p.classList.contains("active")) p.style.display = "block";
+    });
+  }
+
+  // --- Header Meta ---
+  function renderHeader() {
+    var meta = dashData.meta || {};
+    var el = document.getElementById("header-meta");
+    el.textContent = (meta.trialCount || 0) + " trials | " +
+      (meta.nodeCount || 0) + " nodes | " +
+      (meta.communityCount || 0) + " communities";
+
+    // Add badges to tabs
+    var netBadge = document.querySelector("#tab-network .tab-badge");
+    if (!netBadge) {
+      netBadge = document.createElement("span");
+      netBadge.className = "tab-badge";
+      document.getElementById("tab-network").appendChild(netBadge);
+    }
+    netBadge.textContent = meta.nodeCount || 0;
+
+    var desertBadge = document.querySelector("#tab-deserts .tab-badge");
+    if (!desertBadge) {
+      desertBadge = document.createElement("span");
+      desertBadge.className = "tab-badge";
+      document.getElementById("tab-deserts").appendChild(desertBadge);
+    }
+    var desertCount = (dashData.geography && dashData.geography.deserts)
+      ? dashData.geography.deserts.length : 0;
+    var factoryCount = dashData.factories ? dashData.factories.length : 0;
+    desertBadge.textContent = desertCount + factoryCount;
+  }
+
+  // ===================================================================
+  // PANEL 1: Network View (D3 Force-Directed Graph)
+  // ===================================================================
+  function renderNetwork() {
+    var network = dashData.network;
+    if (!network || !network.nodes) return;
+
+    var svg = d3.select("#network-svg");
+    var svgEl = svg.node();
+    var width = svgEl.clientWidth || 800;
+    var height = svgEl.clientHeight || 500;
+
+    svg.selectAll("*").remove();
+
+    // Prepare nodes and links
+    var nodeEntries = Object.entries(network.nodes);
+    var nodes = nodeEntries.map(function(entry) {
+      return {
+        id: entry[0],
+        type: entry[1].type,
+        trialCount: entry[1].trialCount || 0,
+        community: entry[1].community != null ? entry[1].community : 0,
+        conditions: entry[1].conditions || [],
+        country: entry[1].country || "",
+        sponsorClass: entry[1].sponsorClass || "",
+      };
+    });
+
+    var nodeMap = {};
+    nodes.forEach(function(n) { nodeMap[n.id] = n; });
+
+    var links = [];
+    (network.edges || []).forEach(function(e) {
+      if (nodeMap[e.source] && nodeMap[e.target]) {
+        links.push({
+          source: e.source,
+          target: e.target,
+          weight: e.weight || 1,
+          trials: e.trials || [],
+        });
+      }
+    });
+
+    // Tooltip
+    var tooltip = d3.select("body").append("div")
+      .attr("class", "d3-tooltip")
+      .style("opacity", 0);
+
+    // Zoom
+    var g = svg.append("g");
+    svg.call(d3.zoom()
+      .scaleExtent([0.2, 5])
+      .on("zoom", function(event) {
+        g.attr("transform", event.transform);
+      })
+    );
+
+    // Force simulation
+    simulation = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(links).id(function(d) { return d.id; })
+        .distance(function(d) { return 80 / Math.sqrt(d.weight); })
+        .strength(function(d) { return 0.3 * Math.sqrt(d.weight); }))
+      .force("charge", d3.forceManyBody().strength(-120))
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      .force("collision", d3.forceCollide().radius(function(d) {
+        return nodeRadius(d) + 2;
+      }));
+
+    // Draw links
+    var link = g.append("g")
+      .attr("class", "links")
+      .selectAll("line")
+      .data(links)
+      .join("line")
+      .attr("stroke", "#94a3b8")
+      .attr("stroke-opacity", 0.4)
+      .attr("stroke-width", function(d) { return Math.max(1, Math.sqrt(d.weight)); });
+
+    // Draw nodes
+    var node = g.append("g")
+      .attr("class", "nodes")
+      .selectAll("g")
+      .data(nodes)
+      .join("g")
+      .call(d3.drag()
+        .on("start", dragStart)
+        .on("drag", dragging)
+        .on("end", dragEnd));
+
+    // Node shapes: sponsors=rect, sites=circle
+    node.each(function(d) {
+      var sel = d3.select(this);
+      var r = nodeRadius(d);
+      var color = COMMUNITY_COLORS[d.community % COMMUNITY_COLORS.length];
+      if (d.type === "sponsor") {
+        sel.append("rect")
+          .attr("width", r * 2)
+          .attr("height", r * 2)
+          .attr("x", -r)
+          .attr("y", -r)
+          .attr("rx", 3)
+          .attr("fill", color)
+          .attr("stroke", "#fff")
+          .attr("stroke-width", 1.5);
+      } else {
+        sel.append("circle")
+          .attr("r", r)
+          .attr("fill", color)
+          .attr("stroke", "#fff")
+          .attr("stroke-width", 1.5);
+      }
+    });
+
+    // Labels for high-degree nodes
+    node.filter(function(d) { return d.trialCount >= 2; })
+      .append("text")
+      .text(function(d) {
+        return d.id.length > 18 ? d.id.substring(0, 16) + ".." : d.id;
+      })
+      .attr("font-size", "9px")
+      .attr("fill", "var(--text-primary)")
+      .attr("text-anchor", "middle")
+      .attr("dy", function(d) { return nodeRadius(d) + 12; });
+
+    // Hover + Click
+    node.on("mouseover", function(event, d) {
+        tooltip.transition().duration(100).style("opacity", 1);
+        tooltip.html(
+          "<strong>" + esc(d.id) + "</strong><br>" +
+          "Type: " + esc(d.type) + "<br>" +
+          "Trials: " + d.trialCount + "<br>" +
+          "Community: " + d.community
+        )
+        .style("left", (event.pageX + 12) + "px")
+        .style("top", (event.pageY - 10) + "px");
+      })
+      .on("mousemove", function(event) {
+        tooltip
+          .style("left", (event.pageX + 12) + "px")
+          .style("top", (event.pageY - 10) + "px");
+      })
+      .on("mouseout", function() {
+        tooltip.transition().duration(200).style("opacity", 0);
+      })
+      .on("click", function(event, d) {
+        showNodeDetail(d);
+      });
+
+    // Accessibility: nodes focusable
+    node.attr("tabindex", "0")
+      .attr("role", "button")
+      .attr("aria-label", function(d) {
+        return d.type + ": " + d.id + ", " + d.trialCount + " trials";
+      });
+    node.on("keydown", function(event, d) {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        showNodeDetail(d);
+      }
+    });
+
+    // Tick
+    simulation.on("tick", function() {
+      link
+        .attr("x1", function(d) { return d.source.x; })
+        .attr("y1", function(d) { return d.source.y; })
+        .attr("x2", function(d) { return d.target.x; })
+        .attr("y2", function(d) { return d.target.y; });
+      node.attr("transform", function(d) {
+        return "translate(" + d.x + "," + d.y + ")";
+      });
+    });
+
+    // Legend: add community colors
+    renderNetworkLegend();
+  }
+
+  function nodeRadius(d) {
+    return Math.max(5, Math.min(18, 3 + Math.sqrt(d.trialCount) * 3));
+  }
+
+  function dragStart(event, d) {
+    if (!event.active) simulation.alphaTarget(0.3).restart();
+    d.fx = d.x;
+    d.fy = d.y;
+  }
+  function dragging(event, d) {
+    d.fx = event.x;
+    d.fy = event.y;
+  }
+  function dragEnd(event, d) {
+    if (!event.active) simulation.alphaTarget(0);
+    d.fx = null;
+    d.fy = null;
+  }
+
+  function showNodeDetail(d) {
+    var detailEl = document.getElementById("node-detail");
+    var conditions = (d.conditions || []).slice(0, 8);
+    var condStr = conditions.map(esc).join(", ");
+    if (d.conditions && d.conditions.length > 8) {
+      condStr += " (+" + (d.conditions.length - 8) + " more)";
+    }
+
+    var countryStr = "";
+    if (d.country) {
+      countryStr = Array.isArray(d.country) ? d.country.join(", ") : d.country;
+    }
+
+    var html = "<h3>" + esc(d.id) + "</h3>";
+    html += '<div class="detail-row"><span class="detail-label">Type</span><span class="detail-value">' + esc(d.type) + "</span></div>";
+    html += '<div class="detail-row"><span class="detail-label">Trials</span><span class="detail-value">' + d.trialCount + "</span></div>";
+    html += '<div class="detail-row"><span class="detail-label">Community</span><span class="detail-value">' + d.community + "</span></div>";
+    if (d.sponsorClass) {
+      html += '<div class="detail-row"><span class="detail-label">Class</span><span class="detail-value">' + esc(d.sponsorClass) + "</span></div>";
+    }
+    if (countryStr) {
+      html += '<div class="detail-row"><span class="detail-label">Country</span><span class="detail-value">' + esc(countryStr) + "</span></div>";
+    }
+    if (condStr) {
+      html += '<div class="detail-row"><span class="detail-label">Conditions</span><span class="detail-value" style="font-size:12px;">' + condStr + "</span></div>";
+    }
+    detailEl.innerHTML = html;
+  }
+
+  function renderNetworkLegend() {
+    if (!dashData.communities) return;
+    var communities = {};
+    Object.values(dashData.communities).forEach(function(c) {
+      communities[c] = (communities[c] || 0) + 1;
+    });
+
+    var legendEl = document.getElementById("network-legend");
+    var html = "<h4>Communities</h4>";
+
+    // Sort by size descending
+    var sorted = Object.entries(communities).sort(function(a, b) { return b[1] - a[1]; });
+    sorted.forEach(function(entry) {
+      var cid = parseInt(entry[0], 10);
+      var count = entry[1];
+      var color = COMMUNITY_COLORS[cid % COMMUNITY_COLORS.length];
+      html += '<div class="legend-item">' +
+        '<span class="legend-dot" style="background:' + color + ';"></span>' +
+        "Community " + cid + " (" + count + " nodes)" +
+        "</div>";
+    });
+
+    // Add type legend
+    html += "<h4 style='margin-top:12px;'>Node Types</h4>";
+    html += '<div class="legend-item"><span class="legend-dot" style="background:var(--node-sponsor);border-radius:2px;"></span> Sponsor (square)</div>';
+    html += '<div class="legend-item"><span class="legend-dot" style="background:var(--node-site);"></span> Site (circle)</div>';
+
+    legendEl.innerHTML = html;
+  }
+
+  // ===================================================================
+  // PANEL 2: Geographic View (Leaflet)
+  // ===================================================================
+  function renderGeography() {
+    var geo = dashData.geography;
+    if (!geo) return;
+
+    // Stats
+    document.getElementById("stat-countries").textContent = geo.uniqueCountries || 0;
+    document.getElementById("stat-gini").textContent = (geo.gini != null) ? geo.gini.toFixed(3) : "--";
+    document.getElementById("stat-trials").textContent = dashData.meta.trialCount || 0;
+
+    // Country list
+    var dist = geo.countryDistribution || {};
+    var sorted = Object.entries(dist).sort(function(a, b) { return b[1] - a[1]; });
+    var listEl = document.getElementById("country-list");
+    var html = "";
+    sorted.forEach(function(entry) {
+      html += '<div class="country-row">' +
+        '<span class="country-name">' + esc(entry[0]) + "</span>" +
+        '<span class="country-count">' + entry[1] + "</span>" +
+        "</div>";
+    });
+    listEl.innerHTML = html || '<div style="color:var(--text-muted);">No data</div>';
+
+    // Leaflet map
+    if (!leafletMap) {
+      leafletMap = L.map("leaflet-map").setView([20, 0], 2);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "OpenStreetMap contributors",
+        maxZoom: 18,
+      }).addTo(leafletMap);
+    }
+
+    // Clear old markers
+    leafletMarkers.forEach(function(m) { leafletMap.removeLayer(m); });
+    leafletMarkers = [];
+
+    // Max count for scaling
+    var maxCount = Math.max.apply(null, Object.values(dist).concat([1]));
+
+    // Add markers
+    sorted.forEach(function(entry) {
+      var country = entry[0];
+      var count = entry[1];
+      var coords = COUNTRY_COORDS[country];
+      if (!coords) return;
+
+      // Density color
+      var ratio = count / maxCount;
+      var color;
+      if (ratio > 0.6) color = "#ef4444";
+      else if (ratio > 0.3) color = "#f59e0b";
+      else color = "#10b981";
+
+      var radius = Math.max(6, Math.min(30, 6 + Math.sqrt(count) * 4));
+
+      var marker = L.circleMarker(coords, {
+        radius: radius,
+        fillColor: color,
+        fillOpacity: 0.7,
+        color: "#fff",
+        weight: 1.5,
+      }).addTo(leafletMap);
+
+      marker.bindPopup(
+        "<strong>" + esc(country) + "</strong><br>" +
+        "Trials: " + count
+      );
+
+      leafletMarkers.push(marker);
+    });
+  }
+
+  // ===================================================================
+  // PANEL 3: Sponsor Profile
+  // ===================================================================
+  function renderSponsorProfile() {
+    var sponsors = dashData.sponsors;
+    if (!sponsors) return;
+
+    var select = document.getElementById("sponsor-select");
+    select.innerHTML = '<option value="">-- Select a sponsor --</option>';
+
+    // Sort sponsors by trial count descending
+    var sorted = Object.entries(sponsors).sort(function(a, b) {
+      return (b[1].trialCount || 0) - (a[1].trialCount || 0);
+    });
+
+    sorted.forEach(function(entry) {
+      var opt = document.createElement("option");
+      opt.value = entry[0];
+      opt.textContent = entry[0] + " (" + entry[1].trialCount + " trials)";
+      select.appendChild(opt);
+    });
+
+    select.addEventListener("change", function() {
+      var name = select.value;
+      if (!name) {
+        clearSponsorDetail();
+        return;
+      }
+      showSponsorDetail(name, sponsors[name]);
+    });
+
+    // Auto-select first if preference saved
+    var prefs = loadPrefs();
+    if (prefs.selectedSponsor && sponsors[prefs.selectedSponsor]) {
+      select.value = prefs.selectedSponsor;
+      showSponsorDetail(prefs.selectedSponsor, sponsors[prefs.selectedSponsor]);
+    }
+  }
+
+  function showSponsorDetail(name, data) {
+    // Save preference
+    var prefs = loadPrefs();
+    prefs.selectedSponsor = name;
+    savePrefs(prefs);
+
+    // Stats cards
+    var statsEl = document.getElementById("sponsor-stats");
+    var conditions = data.conditions || [];
+    statsEl.innerHTML =
+      '<div class="stat-card"><div class="stat-value">' + (data.trialCount || 0) +
+      '</div><div class="stat-label">Trials</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + (data.sites ? data.sites.length : 0) +
+      '</div><div class="stat-label">Sites</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + conditions.length +
+      '</div><div class="stat-label">Conditions</div></div>' +
+      '<div class="stat-card"><div class="stat-value">' + esc(data.sponsorClass || "N/A") +
+      '</div><div class="stat-label">Class</div></div>';
+
+    // Sites table
+    var tbody = document.getElementById("sponsor-sites-body");
+    var sites = data.sites || [];
+    if (sites.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);">No sites found</td></tr>';
+      return;
+    }
+
+    var html = "";
+    sites.forEach(function(s) {
+      var ctry = Array.isArray(s.country) ? s.country.join(", ") : (s.country || "Unknown");
+      html += "<tr>" +
+        "<td>" + esc(s.site) + "</td>" +
+        "<td>" + esc(ctry) + "</td>" +
+        "<td>" + (s.sharedTrials || 0) + "</td>" +
+        "</tr>";
+    });
+    tbody.innerHTML = html;
+  }
+
+  function clearSponsorDetail() {
+    document.getElementById("sponsor-stats").innerHTML = "";
+    document.getElementById("sponsor-sites-body").innerHTML =
+      '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);">Select a sponsor above</td></tr>';
+  }
+
+  // ===================================================================
+  // PANEL 4: Trial Deserts + Factory Alerts
+  // ===================================================================
+  function renderDeserts() {
+    var geo = dashData.geography;
+    var deserts = (geo && geo.deserts) ? geo.deserts : [];
+    var factories = dashData.factories || [];
+
+    // Deserts table
+    var tbody = document.getElementById("deserts-body");
+    if (deserts.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No trial deserts detected (all conditions have broad geographic distribution)</td></tr>';
+    } else {
+      var html = "";
+      deserts.forEach(function(d) {
+        var pct = (d.pct * 100).toFixed(1);
+        var barClass = d.pct > 0.95 ? "pct-high" : "pct-medium";
+        html += "<tr>" +
+          "<td>" + esc(d.condition) + "</td>" +
+          "<td>" + d.countries.map(esc).join(", ") + "</td>" +
+          "<td>" + pct + "%</td>" +
+          '<td><div class="pct-bar-wrap"><div class="pct-bar ' + barClass +
+          '" style="width:' + pct + '%;"></div></div></td>' +
+          "</tr>";
+      });
+      tbody.innerHTML = html;
+    }
+
+    // Factory alerts
+    var alertsEl = document.getElementById("factory-alerts");
+    if (factories.length === 0) {
+      alertsEl.innerHTML = '<div class="card" style="text-align:center;color:var(--text-muted);padding:24px;">No factory-pattern sites detected in current dataset.</div>';
+    } else {
+      var html2 = "";
+      factories.forEach(function(f) {
+        var scoreClass = f.factoryScore > 0.7 ? "score-high" : "score-medium";
+        html2 += '<div class="factory-card">' +
+          "<h4>" + esc(f.site) +
+          '<span class="factory-score ' + scoreClass + '">' +
+          "Score: " + f.factoryScore + "</span></h4>" +
+          '<div style="font-size:13px;color:var(--text-secondary);margin-top:6px;">' +
+          "Trials: " + f.trialCount +
+          " | Sponsors: " + f.sponsorCount +
+          " | Conditions: " + f.conditionCount +
+          "</div>" +
+          '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;">' +
+          "Sponsors: " + (f.sponsors || []).slice(0, 5).map(esc).join(", ") +
+          (f.sponsors && f.sponsors.length > 5 ? " (+" + (f.sponsors.length - 5) + " more)" : "") +
+          "</div></div>";
+      });
+      alertsEl.innerHTML = html2;
+    }
+  }
+
+  // ===================================================================
+  // INIT
+  // ===================================================================
+  function init() {
+    initDarkMode();
+    initTabs();
+    loadData();
+  }
+
+  // Wait for DOM
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+
+})();
+</script>
+</body>
+</html>
