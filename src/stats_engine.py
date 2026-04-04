@@ -1764,3 +1764,661 @@ def network_robustness(graph, strategy='targeted', seed=42):
         "critical_threshold": float(critical_threshold),
         "robustness_index": float(robustness_index),
     }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 17. Spectral Embedding (Normalized Laplacian eigendecomposition)
+# ──────────────────────────────────────────────────────────────────────
+
+def spectral_embedding(graph, n_dims=2):
+    """Embed graph nodes via eigendecomposition of normalized Laplacian.
+
+    Computes L_sym = D^{-1/2} L D^{-1/2} and takes the first n_dims
+    non-trivial eigenvectors (those after the zero eigenvalue) as
+    coordinate axes.
+
+    Args:
+        graph: TrialAtlas graph dict with "nodes" and "edges".
+        n_dims: Number of embedding dimensions (default 2).
+
+    Returns:
+        dict with:
+            embeddings: {node_name: [coord_1, ..., coord_n_dims]}
+            explained_variance: list of eigenvalues used (fraction of total).
+    """
+    node_list, name_to_idx, adj, degrees, total_weight = _build_adj(graph)
+    n = len(node_list)
+
+    if n < 2:
+        return {
+            "embeddings": {node_list[0]: [0.0] * n_dims} if n == 1 else {},
+            "explained_variance": [0.0] * n_dims,
+        }
+
+    # Build adjacency matrix A and degree matrix D
+    A = np.zeros((n, n))
+    for i in adj:
+        for j, w in adj[i].items():
+            A[i][j] = w
+
+    D_diag = np.array([degrees.get(i, 0.0) for i in range(n)])
+    # Avoid division by zero for isolated nodes
+    D_inv_sqrt = np.zeros(n)
+    for i in range(n):
+        if D_diag[i] > 0:
+            D_inv_sqrt[i] = 1.0 / math.sqrt(D_diag[i])
+
+    # Laplacian L = D - A
+    L = np.diag(D_diag) - A
+
+    # Normalized Laplacian L_sym = D^{-1/2} L D^{-1/2}
+    D_inv_sqrt_mat = np.diag(D_inv_sqrt)
+    L_sym = D_inv_sqrt_mat @ L @ D_inv_sqrt_mat
+
+    # Symmetrize to avoid numerical issues
+    L_sym = (L_sym + L_sym.T) / 2.0
+
+    eigenvalues, eigenvectors = np.linalg.eigh(L_sym)
+
+    # Skip first eigenvector (trivial, eigenvalue ~0)
+    # Take next n_dims eigenvectors
+    actual_dims = min(n_dims, n - 1)
+    selected_eigenvalues = eigenvalues[1:1 + actual_dims]
+    selected_vectors = eigenvectors[:, 1:1 + actual_dims]
+
+    # Explained variance: fraction of total eigenvalue sum
+    total_eigensum = float(np.sum(eigenvalues[1:]))  # exclude trivial
+    if total_eigensum > 0:
+        explained = [float(ev / total_eigensum) for ev in selected_eigenvalues]
+    else:
+        explained = [0.0] * actual_dims
+
+    # Pad if n_dims > actual_dims
+    if actual_dims < n_dims:
+        explained += [0.0] * (n_dims - actual_dims)
+
+    embeddings = {}
+    for i, name in enumerate(node_list):
+        coords = []
+        for d in range(actual_dims):
+            coords.append(float(selected_vectors[i, d]))
+        # Pad
+        coords += [0.0] * (n_dims - actual_dims)
+        embeddings[name] = coords
+
+    return {
+        "embeddings": embeddings,
+        "explained_variance": explained,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 18. Temporal Network Analysis
+# ──────────────────────────────────────────────────────────────────────
+
+def temporal_network_analysis(trials_with_dates):
+    """Analyze temporal evolution of a trial collaboration network.
+
+    Builds yearly snapshots tracking growth, preferential attachment,
+    and densification.
+
+    Args:
+        trials_with_dates: list of dicts, each with:
+            nctId, sponsor, year (int), locations: [{facility, country}]
+
+    Returns:
+        dict with:
+            snapshots: list of {year, n_nodes, n_edges, density}
+            growth_rate: average annual node growth rate
+            preferential_attachment_alpha: exponent alpha where
+                P(edge to v) ~ deg(v)^alpha
+            densification_exponent: beta where e ~ n^beta
+    """
+    # Sort trials by year
+    sorted_trials = sorted(trials_with_dates, key=lambda t: t.get("year", 0))
+    if not sorted_trials:
+        return {
+            "snapshots": [],
+            "growth_rate": 0.0,
+            "preferential_attachment_alpha": 0.0,
+            "densification_exponent": 0.0,
+        }
+
+    # Build cumulative snapshots per year
+    all_nodes = set()
+    all_edges = set()
+    years_seen = []
+    snapshots = []
+
+    # Group by year
+    year_groups = defaultdict(list)
+    for trial in sorted_trials:
+        yr = trial.get("year", 0)
+        year_groups[yr].append(trial)
+
+    for year in sorted(year_groups.keys()):
+        for trial in year_groups[year]:
+            sponsor = trial.get("sponsor", "Unknown")
+            locations = trial.get("locations", [])
+            entities = [sponsor]
+            for loc in locations:
+                facility = loc.get("facility", "")
+                country = loc.get("country", "")
+                if facility:
+                    entities.append(facility)
+                elif country:
+                    entities.append(country)
+
+            all_nodes.update(entities)
+
+            # Edges: sponsor to each facility
+            for i in range(1, len(entities)):
+                edge = tuple(sorted([entities[0], entities[i]]))
+                all_edges.add(edge)
+            # Facility-facility edges within same trial
+            for i in range(1, len(entities)):
+                for j in range(i + 1, len(entities)):
+                    edge = tuple(sorted([entities[i], entities[j]]))
+                    all_edges.add(edge)
+
+        n_nodes = len(all_nodes)
+        n_edges = len(all_edges)
+        max_edges = n_nodes * (n_nodes - 1) / 2 if n_nodes > 1 else 1
+        density = n_edges / max_edges if max_edges > 0 else 0.0
+
+        snapshots.append({
+            "year": year,
+            "n_nodes": n_nodes,
+            "n_edges": n_edges,
+            "density": round(density, 6),
+        })
+        years_seen.append(year)
+
+    # Growth rate: average annual node growth
+    if len(snapshots) >= 2:
+        node_counts = [s["n_nodes"] for s in snapshots]
+        rates = []
+        for i in range(1, len(node_counts)):
+            if node_counts[i - 1] > 0:
+                rates.append((node_counts[i] - node_counts[i - 1]) / node_counts[i - 1])
+        growth_rate = float(np.mean(rates)) if rates else 0.0
+    else:
+        growth_rate = 0.0
+
+    # Preferential attachment: fit alpha from degree-new-edge correlation
+    # P(new edge to v) ~ deg(v)^alpha
+    # Use log-log regression on cumulative degree vs attachment counts
+    pa_alpha = 0.0
+    if len(snapshots) >= 2:
+        # Build degree distribution at each step and measure attachment
+        node_degree = defaultdict(int)
+        edges_so_far = set()
+        degree_vals = []
+        attach_counts = []
+
+        for trial in sorted_trials:
+            sponsor = trial.get("sponsor", "Unknown")
+            locations = trial.get("locations", [])
+            entities = [sponsor]
+            for loc in locations:
+                facility = loc.get("facility", "")
+                if facility:
+                    entities.append(facility)
+
+            # Record degrees BEFORE adding new edges
+            for ent in entities:
+                if node_degree[ent] > 0:
+                    degree_vals.append(node_degree[ent])
+                    attach_counts.append(1)
+
+            # Add edges
+            for i in range(len(entities)):
+                for j in range(i + 1, len(entities)):
+                    edge = tuple(sorted([entities[i], entities[j]]))
+                    if edge not in edges_so_far:
+                        edges_so_far.add(edge)
+                        node_degree[entities[i]] += 1
+                        node_degree[entities[j]] += 1
+
+        if len(degree_vals) > 2:
+            # Bin by degree and compute average attachment
+            deg_arr = np.array(degree_vals, dtype=float)
+            att_arr = np.array(attach_counts, dtype=float)
+            unique_degs = np.unique(deg_arr)
+            if len(unique_degs) > 1:
+                mean_attach = []
+                for d in unique_degs:
+                    mask = deg_arr == d
+                    mean_attach.append(float(np.sum(att_arr[mask])))
+                log_deg = np.log(unique_degs + 1)
+                log_att = np.log(np.array(mean_attach) + 1)
+                if len(log_deg) > 1:
+                    slope, _, _, _, _ = sp_stats.linregress(log_deg, log_att)
+                    pa_alpha = float(slope)
+
+    # Densification exponent: e ~ n^beta
+    # log(e) = beta * log(n) + const
+    densification_beta = 0.0
+    if len(snapshots) >= 2:
+        log_n = []
+        log_e = []
+        for s in snapshots:
+            if s["n_nodes"] > 1 and s["n_edges"] > 0:
+                log_n.append(math.log(s["n_nodes"]))
+                log_e.append(math.log(s["n_edges"]))
+        if len(log_n) > 1:
+            slope, _, _, _, _ = sp_stats.linregress(log_n, log_e)
+            densification_beta = float(slope)
+
+    return {
+        "snapshots": snapshots,
+        "growth_rate": float(growth_rate),
+        "preferential_attachment_alpha": float(pa_alpha),
+        "densification_exponent": float(densification_beta),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 19. Network Entropy
+# ──────────────────────────────────────────────────────────────────────
+
+def network_entropy(graph):
+    """Compute multiple entropy measures for a graph.
+
+    Args:
+        graph: TrialAtlas graph dict.
+
+    Returns:
+        dict with:
+            structural_entropy: Shannon entropy of degree distribution.
+            von_neumann_entropy: H_vn = -Tr(rho log2(rho)) where rho = L/Tr(L).
+            graph_energy: E = sum(|eigenvalues of A|).
+            complexity_index: C = H * (1 - H/H_max).
+    """
+    node_list, name_to_idx, adj, degrees, total_weight = _build_adj(graph)
+    n = len(node_list)
+
+    if n < 2:
+        return {
+            "structural_entropy": 0.0,
+            "von_neumann_entropy": 0.0,
+            "graph_energy": 0.0,
+            "complexity_index": 0.0,
+        }
+
+    # ── Structural entropy: Shannon on degree distribution ──
+    deg_list = [degrees.get(i, 0) for i in range(n)]
+    total_deg = sum(deg_list)
+    if total_deg > 0:
+        p_k = np.array(deg_list) / total_deg
+    else:
+        p_k = np.ones(n) / n
+
+    structural_entropy = 0.0
+    for p in p_k:
+        if p > 0:
+            structural_entropy -= p * math.log(p)
+
+    # ── Von Neumann entropy ──
+    A = np.zeros((n, n))
+    for i in adj:
+        for j, w in adj[i].items():
+            A[i][j] = w
+
+    D_diag = np.array([degrees.get(i, 0.0) for i in range(n)])
+    L = np.diag(D_diag) - A
+
+    trace_L = float(np.trace(L))
+    if trace_L > 0:
+        rho = L / trace_L
+        rho = (rho + rho.T) / 2.0  # symmetrize
+        eigenvalues_rho = np.linalg.eigvalsh(rho)
+        von_neumann_entropy = 0.0
+        for ev in eigenvalues_rho:
+            if ev > 1e-15:
+                von_neumann_entropy -= ev * math.log2(ev)
+    else:
+        von_neumann_entropy = 0.0
+
+    # ── Graph energy ──
+    eigenvalues_A = np.linalg.eigvalsh(A)
+    graph_energy = float(np.sum(np.abs(eigenvalues_A)))
+
+    # ── Complexity index: C = H * (1 - H/H_max) ──
+    H = structural_entropy
+    H_max = math.log(n) if n > 1 else 1.0
+    if H_max > 0:
+        complexity_index = H * (1.0 - H / H_max)
+    else:
+        complexity_index = 0.0
+
+    return {
+        "structural_entropy": float(structural_entropy),
+        "von_neumann_entropy": float(von_neumann_entropy),
+        "graph_energy": float(graph_energy),
+        "complexity_index": float(complexity_index),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 20. Hyperbolic Embedding (Poincare disk via stress minimization)
+# ──────────────────────────────────────────────────────────────────────
+
+def hyperbolic_embedding(graph, n_dims=2, seed=42):
+    """Embed graph nodes into the Poincare disk model of hyperbolic space.
+
+    Uses stress minimization with Riemannian gradient descent in the
+    Poincare disk. The hyperbolic distance between points u, v is:
+        d_H(u,v) = arccosh(1 + 2 ||u-v||^2 / ((1-||u||^2)(1-||v||^2)))
+
+    Args:
+        graph: TrialAtlas graph dict.
+        n_dims: Embedding dimensionality (default 2: polar coords r, theta).
+        seed: Random seed for reproducibility.
+
+    Returns:
+        dict with:
+            embeddings: {node: [r, theta, ...]} polar coordinates
+            distortion: mean |d_embedded - d_graph| / d_graph
+            map_score: mean average precision (fraction of true neighbors
+                       recovered in embedding-nearest-neighbor ranking)
+    """
+    rng = np.random.RandomState(seed)
+    node_list, name_to_idx, adj, degrees, total_weight = _build_adj(graph)
+    n = len(node_list)
+
+    if n < 2:
+        emb = {}
+        if n == 1:
+            emb[node_list[0]] = [0.0] * n_dims
+        return {"embeddings": emb, "distortion": 0.0, "map_score": 1.0}
+
+    # ── BFS shortest-path distances ──
+    dist_matrix = np.full((n, n), float('inf'))
+    for start in range(n):
+        dist_matrix[start][start] = 0.0
+        queue = [start]
+        visited = {start}
+        while queue:
+            current = queue.pop(0)
+            for nbr in adj.get(current, {}):
+                if nbr not in visited:
+                    visited.add(nbr)
+                    dist_matrix[start][nbr] = dist_matrix[start][current] + 1.0
+                    queue.append(nbr)
+
+    # Replace inf with max_dist + 1 for disconnected components
+    max_finite = float(np.max(dist_matrix[np.isfinite(dist_matrix)]))
+    dist_matrix[~np.isfinite(dist_matrix)] = max_finite + 1.0
+
+    # ── Initialize points in Poincare disk (Cartesian coords) ──
+    # Points inside unit disk: ||x|| < 1
+    coords = rng.randn(n, n_dims) * 0.1  # small initial positions
+
+    # Clip to inside disk
+    for i in range(n):
+        norm = np.linalg.norm(coords[i])
+        if norm >= 0.95:
+            coords[i] = coords[i] / norm * 0.9
+
+    def _hyp_dist(u, v):
+        """Poincare disk distance."""
+        diff_sq = float(np.sum((u - v) ** 2))
+        nu = float(np.sum(u ** 2))
+        nv = float(np.sum(v ** 2))
+        denom = (1.0 - nu) * (1.0 - nv)
+        if denom <= 0:
+            return 20.0  # large distance for boundary points
+        arg = 1.0 + 2.0 * diff_sq / denom
+        if arg < 1.0:
+            arg = 1.0
+        return math.acosh(arg)
+
+    def _riemannian_grad(u, euclidean_grad):
+        """Convert Euclidean gradient to Riemannian (Poincare) gradient."""
+        nu = float(np.sum(u ** 2))
+        factor = ((1.0 - nu) ** 2) / 4.0
+        return factor * euclidean_grad
+
+    # ── Gradient descent ──
+    lr = 0.01
+    n_iter = 300
+    for iteration in range(n_iter):
+        # Decay learning rate
+        current_lr = lr * (1.0 - iteration / n_iter)
+
+        for i in range(n):
+            grad_i = np.zeros(n_dims)
+            for j in range(n):
+                if i == j:
+                    continue
+                d_target = dist_matrix[i][j]
+                d_embed = _hyp_dist(coords[i], coords[j])
+
+                if d_embed < 1e-10:
+                    continue
+
+                # Stress gradient: d(d_embed - d_target)^2 / d(coords_i)
+                # Approximate Euclidean gradient
+                direction = coords[i] - coords[j]
+                dir_norm = np.linalg.norm(direction)
+                if dir_norm < 1e-10:
+                    continue
+                direction = direction / dir_norm
+                grad_i += 2.0 * (d_embed - d_target) * direction
+
+            # Riemannian gradient
+            riem_grad = _riemannian_grad(coords[i], grad_i)
+            coords[i] -= current_lr * riem_grad
+
+            # Project back into disk
+            norm = np.linalg.norm(coords[i])
+            if norm >= 0.99:
+                coords[i] = coords[i] / norm * 0.98
+
+    # ── Convert to polar coordinates ──
+    embeddings = {}
+    for i, name in enumerate(node_list):
+        r = float(np.linalg.norm(coords[i]))
+        if n_dims >= 2:
+            theta = float(math.atan2(coords[i][1], coords[i][0]))
+        else:
+            theta = 0.0
+        polar = [r, theta]
+        # Additional dims as extra angles
+        for d in range(2, n_dims):
+            polar.append(float(coords[i][d]))
+        embeddings[name] = polar[:n_dims]
+
+    # ── Distortion ──
+    distortion_sum = 0.0
+    distortion_count = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            d_g = dist_matrix[i][j]
+            d_e = _hyp_dist(coords[i], coords[j])
+            if d_g > 0:
+                distortion_sum += abs(d_e - d_g) / d_g
+                distortion_count += 1
+    distortion = distortion_sum / distortion_count if distortion_count > 0 else 0.0
+
+    # ── MAP score (mean average precision) ──
+    # For each node, rank neighbors by embedding distance, check if true
+    # graph neighbors appear first
+    map_sum = 0.0
+    for i in range(n):
+        true_neighbors = set(adj.get(i, {}).keys())
+        if not true_neighbors:
+            map_sum += 1.0  # no neighbors to miss
+            continue
+
+        # Rank all other nodes by hyperbolic distance
+        dists = []
+        for j in range(n):
+            if j == i:
+                continue
+            dists.append((j, _hyp_dist(coords[i], coords[j])))
+        dists.sort(key=lambda x: x[1])
+
+        # Average precision
+        hits = 0
+        ap_sum = 0.0
+        for rank, (j, _) in enumerate(dists, 1):
+            if j in true_neighbors:
+                hits += 1
+                ap_sum += hits / rank
+        ap = ap_sum / len(true_neighbors) if true_neighbors else 0.0
+        map_sum += ap
+
+    map_score = map_sum / n
+
+    return {
+        "embeddings": embeddings,
+        "distortion": float(distortion),
+        "map_score": float(map_score),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 21. Network Optimal Transport
+# ──────────────────────────────────────────────────────────────────────
+
+def network_optimal_transport(graph1, graph2):
+    """Compare two graphs via optimal transport distances.
+
+    Computes:
+    1. Wasserstein distance on degree distributions.
+    2. Gromov-Wasserstein distance via Sinkhorn on shortest-path
+       distance matrices.
+
+    Args:
+        graph1, graph2: TrialAtlas graph dicts.
+
+    Returns:
+        dict with:
+            wasserstein_distance: W1 on degree distributions.
+            gromov_wasserstein: approximate GW distance.
+            matched_nodes: list of (node1, node2, transport_mass) tuples.
+    """
+    # ── Helper: extract degree distribution ──
+    def _degree_dist(graph):
+        """Return sorted degree list."""
+        node_list, _, adj, degrees, _ = _build_adj(graph)
+        n = len(node_list)
+        return node_list, [degrees.get(i, 0) for i in range(n)]
+
+    nodes1, degs1 = _degree_dist(graph1)
+    nodes2, degs2 = _degree_dist(graph2)
+    n1 = len(nodes1)
+    n2 = len(nodes2)
+
+    if n1 == 0 or n2 == 0:
+        return {
+            "wasserstein_distance": 0.0,
+            "gromov_wasserstein": 0.0,
+            "matched_nodes": [],
+        }
+
+    # ── 1. Wasserstein on degree distributions (W1) ──
+    # Sort and compute earth-mover's distance on empirical CDFs
+    sorted_d1 = sorted(degs1)
+    sorted_d2 = sorted(degs2)
+
+    # Interpolate to same length
+    max_len = max(n1, n2)
+    interp_d1 = np.interp(
+        np.linspace(0, 1, max_len),
+        np.linspace(0, 1, n1),
+        sorted_d1,
+    )
+    interp_d2 = np.interp(
+        np.linspace(0, 1, max_len),
+        np.linspace(0, 1, n2),
+        sorted_d2,
+    )
+    wasserstein = float(np.mean(np.abs(interp_d1 - interp_d2)))
+
+    # ── 2. Gromov-Wasserstein via Sinkhorn ──
+    # BFS shortest-path distance matrices
+    def _bfs_dist_matrix(graph):
+        node_list, _, adj, _, _ = _build_adj(graph)
+        n = len(node_list)
+        D = np.zeros((n, n))
+        for start in range(n):
+            visited = {start}
+            queue = [start]
+            while queue:
+                curr = queue.pop(0)
+                for nbr in adj.get(curr, {}):
+                    if nbr not in visited:
+                        visited.add(nbr)
+                        D[start][nbr] = D[start][curr] + 1
+                        queue.append(nbr)
+            # Unreachable: set to n (large)
+            for j in range(n):
+                if j != start and j not in visited:
+                    D[start][j] = n
+        return D
+
+    D1 = _bfs_dist_matrix(graph1)
+    D2 = _bfs_dist_matrix(graph2)
+
+    # Uniform distributions
+    p = np.ones(n1) / n1
+    q = np.ones(n2) / n2
+
+    # Cost matrix for GW: C[i,j] = sum_kl |D1[i,k] - D2[j,l]|^2 * p[k] * q[l]
+    # This is O(n1*n2*n1*n2), simplify for small graphs
+    if n1 * n2 <= 10000:
+        C = np.zeros((n1, n2))
+        for i in range(n1):
+            for j in range(n2):
+                val = 0.0
+                for k in range(n1):
+                    for l in range(n2):
+                        val += (D1[i, k] - D2[j, l]) ** 2 * p[k] * q[l]
+                C[i, j] = val
+    else:
+        # Approximate: use random sampling
+        rng = np.random.RandomState(42)
+        n_samples = 100
+        C = np.zeros((n1, n2))
+        for _ in range(n_samples):
+            k = rng.randint(0, n1)
+            l = rng.randint(0, n2)
+            for i in range(n1):
+                for j in range(n2):
+                    C[i, j] += (D1[i, k] - D2[j, l]) ** 2 * p[k] * q[l]
+        C *= (n1 * n2) / n_samples
+
+    # Sinkhorn iterations
+    reg = 0.1  # entropic regularization
+    K = np.exp(-C / reg)
+    K = np.maximum(K, 1e-100)
+
+    u = np.ones(n1)
+    v = np.ones(n2)
+
+    for _ in range(100):
+        u = p / (K @ v)
+        v = q / (K.T @ u)
+        # Clamp for stability
+        u = np.clip(u, 1e-10, 1e10)
+        v = np.clip(v, 1e-10, 1e10)
+
+    # Transport plan
+    T = np.diag(u) @ K @ np.diag(v)
+    gromov_wasserstein = float(np.sum(T * C))
+
+    # ── Matched nodes: top assignments from transport plan ──
+    matched_nodes = []
+    # For each node in graph1, find best match in graph2
+    for i in range(n1):
+        j_best = int(np.argmax(T[i, :]))
+        matched_nodes.append((nodes1[i], nodes2[j_best], float(T[i, j_best])))
+
+    return {
+        "wasserstein_distance": float(wasserstein),
+        "gromov_wasserstein": float(gromov_wasserstein),
+        "matched_nodes": matched_nodes,
+    }

@@ -1,4 +1,4 @@
-"""Stats engine test suite -- 15 tests for TrialAtlas network statistics."""
+"""Stats engine test suite -- 23 tests for TrialAtlas network statistics."""
 
 import json
 import math
@@ -27,6 +27,11 @@ from stats_engine import (
     link_prediction,
     core_periphery,
     network_robustness,
+    spectral_embedding,
+    temporal_network_analysis,
+    network_entropy,
+    hyperbolic_embedding,
+    network_optimal_transport,
 )
 
 
@@ -421,3 +426,178 @@ def test_robustness_fragile():
              "edges": [{"source": "n0", "target": f"n{i}", "weight": 1} for i in range(1, 6)]}
     result = network_robustness(graph, strategy='targeted')
     assert result["critical_threshold"] <= 0.3  # fragile — center removal kills it
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Spectral Embedding (2 tests)
+# ──────────────────────────────────────────────────────────────────────
+
+def test_spectral_embedding_dims():
+    """Spectral embedding returns correct dimensionality for each node."""
+    graph = {
+        "nodes": {f"n{i}": {} for i in range(6)},
+        "edges": [
+            {"source": "n0", "target": "n1", "weight": 1},
+            {"source": "n1", "target": "n2", "weight": 1},
+            {"source": "n2", "target": "n0", "weight": 1},
+            {"source": "n3", "target": "n4", "weight": 1},
+            {"source": "n4", "target": "n5", "weight": 1},
+            {"source": "n5", "target": "n3", "weight": 1},
+            {"source": "n0", "target": "n3", "weight": 1},
+        ],
+    }
+    result = spectral_embedding(graph, n_dims=3)
+    assert len(result["embeddings"]) == 6
+    for coords in result["embeddings"].values():
+        assert len(coords) == 3
+    assert len(result["explained_variance"]) == 3
+
+
+def test_spectral_embedding_clusters():
+    """Two cliques should be separated in spectral space."""
+    graph = {
+        "nodes": {**{f"a{i}": {} for i in range(5)},
+                  **{f"b{i}": {} for i in range(5)}},
+        "edges": [],
+    }
+    # Dense clique A
+    for i in range(5):
+        for j in range(i + 1, 5):
+            graph["edges"].append({"source": f"a{i}", "target": f"a{j}", "weight": 1})
+    # Dense clique B
+    for i in range(5):
+        for j in range(i + 1, 5):
+            graph["edges"].append({"source": f"b{i}", "target": f"b{j}", "weight": 1})
+    # One bridge edge
+    graph["edges"].append({"source": "a0", "target": "b0", "weight": 1})
+
+    result = spectral_embedding(graph, n_dims=2)
+    # Cluster A coords should differ from cluster B in first dimension
+    a_coords = [result["embeddings"][f"a{i}"][0] for i in range(5)]
+    b_coords = [result["embeddings"][f"b{i}"][0] for i in range(5)]
+    a_mean = sum(a_coords) / len(a_coords)
+    b_mean = sum(b_coords) / len(b_coords)
+    assert abs(a_mean - b_mean) > 0.01  # clusters are separated
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Temporal Network Analysis (2 tests)
+# ──────────────────────────────────────────────────────────────────────
+
+def test_temporal_growth_rate():
+    """Temporal network analysis detects growth over time."""
+    trials = [
+        {"nctId": "T1", "sponsor": "Pfizer", "year": 2020,
+         "locations": [{"facility": "Site A", "country": "US"}]},
+        {"nctId": "T2", "sponsor": "Pfizer", "year": 2021,
+         "locations": [{"facility": "Site B", "country": "US"},
+                       {"facility": "Site C", "country": "UK"}]},
+        {"nctId": "T3", "sponsor": "Novartis", "year": 2022,
+         "locations": [{"facility": "Site D", "country": "DE"},
+                       {"facility": "Site E", "country": "FR"}]},
+        {"nctId": "T4", "sponsor": "Roche", "year": 2023,
+         "locations": [{"facility": "Site F", "country": "JP"},
+                       {"facility": "Site G", "country": "AU"},
+                       {"facility": "Site H", "country": "US"}]},
+    ]
+    result = temporal_network_analysis(trials)
+    assert result["growth_rate"] > 0  # network is growing
+    assert len(result["snapshots"]) == 4
+    # Node count should increase over time
+    node_counts = [s["n_nodes"] for s in result["snapshots"]]
+    assert node_counts[-1] > node_counts[0]
+
+
+def test_temporal_densification():
+    """Densification exponent exists for growing network."""
+    trials = [
+        {"nctId": f"T{i}", "sponsor": f"S{i % 3}", "year": 2020 + i // 3,
+         "locations": [{"facility": f"Fac{j}", "country": "US"} for j in range(i % 4 + 1)]}
+        for i in range(12)
+    ]
+    result = temporal_network_analysis(trials)
+    # Densification exponent should be a finite number
+    assert math.isfinite(result["densification_exponent"])
+    assert len(result["snapshots"]) > 1
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Network Entropy (2 tests)
+# ──────────────────────────────────────────────────────────────────────
+
+def test_network_entropy_positive():
+    """All entropy measures positive for non-trivial graph."""
+    graph = {
+        "nodes": {f"n{i}": {} for i in range(8)},
+        "edges": [
+            {"source": "n0", "target": "n1", "weight": 1},
+            {"source": "n1", "target": "n2", "weight": 1},
+            {"source": "n2", "target": "n3", "weight": 1},
+            {"source": "n3", "target": "n0", "weight": 1},
+            {"source": "n4", "target": "n5", "weight": 1},
+            {"source": "n5", "target": "n6", "weight": 1},
+            {"source": "n6", "target": "n7", "weight": 1},
+            {"source": "n0", "target": "n4", "weight": 1},
+        ],
+    }
+    result = network_entropy(graph)
+    assert result["structural_entropy"] > 0
+    assert result["von_neumann_entropy"] > 0
+    assert result["graph_energy"] > 0
+
+
+def test_network_entropy_complexity_range():
+    """Complexity index should be in [0, 1]."""
+    # Star graph: unequal degree distribution
+    graph = {
+        "nodes": {f"n{i}": {} for i in range(10)},
+        "edges": [{"source": "n0", "target": f"n{i}", "weight": 1} for i in range(1, 10)],
+    }
+    result = network_entropy(graph)
+    assert 0 <= result["complexity_index"] <= 1
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Hyperbolic Embedding (1 test)
+# ──────────────────────────────────────────────────────────────────────
+
+def test_hyperbolic_embedding_basic():
+    """Hyperbolic embedding returns correct dims and non-negative distortion."""
+    graph = {
+        "nodes": {f"n{i}": {} for i in range(6)},
+        "edges": [
+            {"source": "n0", "target": "n1", "weight": 1},
+            {"source": "n1", "target": "n2", "weight": 1},
+            {"source": "n2", "target": "n3", "weight": 1},
+            {"source": "n3", "target": "n4", "weight": 1},
+            {"source": "n4", "target": "n5", "weight": 1},
+            {"source": "n0", "target": "n5", "weight": 1},
+        ],
+    }
+    result = hyperbolic_embedding(graph, n_dims=2, seed=42)
+    assert len(result["embeddings"]) == 6
+    for coords in result["embeddings"].values():
+        assert len(coords) == 2
+    assert result["distortion"] >= 0
+    assert 0 <= result["map_score"] <= 1
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Network Optimal Transport (1 test)
+# ──────────────────────────────────────────────────────────────────────
+
+def test_optimal_transport_identical():
+    """Identical graphs should have Wasserstein distance close to 0."""
+    graph = {
+        "nodes": {f"n{i}": {} for i in range(5)},
+        "edges": [
+            {"source": "n0", "target": "n1", "weight": 1},
+            {"source": "n1", "target": "n2", "weight": 1},
+            {"source": "n2", "target": "n3", "weight": 1},
+            {"source": "n3", "target": "n4", "weight": 1},
+        ],
+    }
+    result = network_optimal_transport(graph, graph)
+    assert result["wasserstein_distance"] < 0.01  # identical distributions
+    assert result["gromov_wasserstein"] >= 0
+    assert len(result["matched_nodes"]) == 5
